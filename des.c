@@ -134,7 +134,7 @@ unsigned char * unHexifyKey(unsigned char *key) {
 	unsigned char *rret;
 	// make space
 	rret = malloc(sizeof(char) * 8);
-
+    // set memory to zero
 	memset(rret, 0, 8);
 	// iterate over the two digit hex
 	for (i = 0, j = 0; i < 16; i += 2, j++) {
@@ -147,7 +147,16 @@ unsigned char * unHexifyKey(unsigned char *key) {
 	// return
 	return rret;
 }
-
+// print binary
+void printfB(unsigned char *text) {
+	// variables
+	int i, j;
+	// iterate over text
+	for(i = 0; i < 8; i++)
+		for (j = 0; j < 8; j++)
+	      		printf("%d", !!((text[i] << j) & 0x80));
+	printf("\n");
+}
 
 int main(int argc, char **argv) {
     //FILE *msg_fp = fopen("message.txt", "r");
