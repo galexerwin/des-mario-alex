@@ -47,33 +47,30 @@ static const int finalPermutation[64] = {
 
 
 
+
 // get bit at pos
-int getBit(unsigned char *bits, int pos) {
+int getBit(uint64_t src, int pos) {
 	// set mask
     uint8_t mask = 1 << (7 - pos % 8);
     // return bit at position
-    return (bits[pos/8] & mask) ? 1 : 0;
+    return (src[pos/8] & mask) ? 1 : 0;
 }
 // set bit at pos
-void setBit(unsigned char *bits, int pos, int value) {
+void setBit(uint64_t *dst, int pos, int value) {
 	if (value)
-		B_SET(bits, pos);
-	else
-		B_UNSET(bits, pos);
+		*dst += (0x8000000000000000 >> pos);
 }
 // perform permutation according to the table
-void doPermutation(unsigned char *data, const int *pArray, int count) {
+void doPermutation(uint64_t *data, const int *pArray, int count) {
 	// variables
-	unsigned char temp[8];
+	uint64_t temp;
 	int i;
 	// initialize the memory segment
-	memset(temp, 0, (int)count/8);
+	memset(temp, 0, 32);
 	// iterate over the bits and set according to pArray
-	for (i = 0; i < n; i++)
+	for (i = 0; i < count; i++)
 	   setBit(temp, i, getBit(data, pArray[i] - 1));
 }
-
-
 // expand & permute
 uint8_t * expandPBox (unsigned int v[1]) {
 	// memory storage for returning the expanded p box
@@ -129,7 +126,27 @@ void des_dec(uint32_t v[2], uint32_t const key[2]) {
  * 010100
  * 010100
  */
+// convert hex to string
+unsigned char * unHexifyKey(unsigned char *key) {
+	// variables
+	int i, j;
+	unsigned char temp[2];
+	unsigned char *rret;
+	// make space
+	rret = malloc(sizeof(char) * 8);
 
+	memset(rret, 0, 8);
+	// iterate over the two digit hex
+	for (i = 0, j = 0; i < 16; i += 2, j++) {
+		// store each digit
+		temp[0] = key[i];
+		temp[1] = key[i + 1];
+		// convert to ascii and store
+		rret[j] = (int)strtol(temp, NULL, 16);
+	}
+	// return
+	return rret;
+}
 
 
 int main(int argc, char **argv) {
@@ -137,15 +154,17 @@ int main(int argc, char **argv) {
     //FILE *key_fp = fopen("key.txt", "r");
     //FILE *encrypted_msg_fp = fopen("encrypted_msg.bin", "wb");
     //FILE *decrypted_msg_fp = fopen("decrypted_msg.txt", "w");    
-	unsigned char key[8] = {13,34,57,79,9B,BC,DF,F1};
-	unsigned char temp[8];
+	unsigned char key[8] = "secret";
+	//unsigned char temp[8];
 
-	memcpy(temp, key, 8);
+	uint64_t temp = (uint64_t *)key;
+
+	//memcpy(temp, key, 8);
 
 	doPermutation(&temp, parityDrop, 56);
 
 	int i;
-	for (i = 56; i > 0; i--) {
+	for (i = 64; i > 0; i--) {
 		printf("%d", getBit(temp, i - 1));
 	}
 	printf("\n");
