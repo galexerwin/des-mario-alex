@@ -30,6 +30,17 @@ static const int keyCompression[48] = {
    41, 52, 31, 37, 47, 55, 30, 40, 51, 45, 33, 48,
    44, 49, 39, 56, 34, 53, 46, 42, 50, 36, 29, 32
 };
+// key shifts table
+static const int keyShifts[16] = {
+   1, 1, 2, 2, 2, 2, 2, 2, 1, 2, 2, 2, 2, 2, 2, 1
+};
+// key permuations table
+static const int keyPermutations[48] = {
+   14, 17, 11, 24,  1,  5,  3, 28, 15,  6, 21, 10,
+   23, 19, 12,  4, 26,  8, 16,  7, 27, 20, 13,  2,
+   41, 52, 31, 37, 47, 55, 30, 40, 51, 45, 33, 48,
+   44, 49, 39, 56, 34, 53, 46, 42, 50, 36, 29, 32
+};
 // initial permutation table
 static const int initialPermutation[64] = {
    58, 50, 42, 34, 26, 18, 10,  2, 60, 52, 44, 36, 28, 20, 12,  4,
@@ -45,31 +56,68 @@ static const int finalPermutation[64] = {
    34,  2, 42, 10, 50, 18, 58, 26, 33,  1, 41,  9, 49, 17, 57, 25
 };
 
-
-
-
 // get bit at pos
-int getBit(uint64_t src, int pos) {
+int getBit(unsigned char *src, int pos) {
 	// set mask
     uint8_t mask = 1 << (7 - pos % 8);
     // return bit at position
     return (src[pos/8] & mask) ? 1 : 0;
 }
 // set bit at pos
-void setBit(uint64_t *dst, int pos, int value) {
-	if (value)
-		*dst += (0x8000000000000000 >> pos);
-}
-// perform permutation according to the table
-void doPermutation(uint64_t *data, const int *pArray, int count) {
+void setBit(unsigned char *dst, int pos, int val) {
 	// variables
-	uint64_t temp;
+	unsigned char mask = 0x80;
+	int	i;
+	// iterate over mask and shift
+	for (i = 0; i < (pos % 8); i++)
+	   mask = mask >> 1;
+	// set based on value
+	if (val)
+	   dst[pos / 8] = dst[pos / 8] | mask;
+	else
+	   dst[pos / 8] = dst[pos / 8] & (~mask);
+}
+// push and set bits in rotations
+void pushBit(unsigned char *data, int size, int count) {
+	// variables
+	int  i, j, msBit, lsBit;
+	// iterate over the bits
+	for (i = 0; i < count; i++) {
+		for (j = 0; j <= ((size - 1) / 8); j++) {
+			// last bit
+			lsBit = getBit(&data[i], 0);
+			// set msb if at zero
+			if (i == 0) {
+				msBit = lsBit;
+			} else {
+				setBit(&data[i - 1], 7, lsBit);
+			}
+			// shift left by 1
+			data[i] = data[i] << 1;
+		}
+		// set lsb
+		setBit(data, size - 1, msBit);
+	}
+}
+
+
+
+
+
+
+
+// perform permutation according to the table
+void doPermutation(unsigned char *data, const int *pArray, int count) {
+	// variables
+	unsigned char temp[8];
 	int i;
-	// initialize the memory segment
-	memset(temp, 0, 32);
+	// wipe memory
+	memset(temp, 0, 8);
 	// iterate over the bits and set according to pArray
 	for (i = 0; i < count; i++)
-	   setBit(temp, i, getBit(data, pArray[i] - 1));
+	   setBit(&temp, i, getBit(data, pArray[i] - 1));
+	// set return
+	memcpy(data, temp, 8);
 }
 // expand & permute
 uint8_t * expandPBox (unsigned int v[1]) {
@@ -95,37 +143,23 @@ printf("%d\n", pbox[1]);
 }
 
 
-
-
-
 void hexdump_to_string(const void *data, int size, char *str) {
-    const unsigned char *byte = (unsigned char *)data;
-    while (size > 0) {
- size--;
- sprintf(str, "%.2x ", *byte);
- byte++;
- str+=2;
-    }
+	const unsigned char *byte = (unsigned char *)data;
+	while (size > 0) {
+		size--;
+		sprintf(str, "%.2x ", *byte);
+		byte++;
+		str+=2;
+	}
 }
-
 // des encryption
 void des_enc(uint32_t v[2], uint32_t const key[2]) {
 	
 }
-
 // des decryption
 void des_dec(uint32_t v[2], uint32_t const key[2]) {
 	
 }
-/*
- * 1011
- * 010110
- * 010111
- * 
- * 1010
- * 010100
- * 010100
- */
 // convert hex to string
 unsigned char * unHexifyKey(unsigned char *key) {
 	// variables
@@ -162,29 +196,50 @@ int main(int argc, char **argv) {
     //FILE *msg_fp = fopen("message.txt", "r");
     //FILE *key_fp = fopen("key.txt", "r");
     //FILE *encrypted_msg_fp = fopen("encrypted_msg.bin", "wb");
-    //FILE *decrypted_msg_fp = fopen("decrypted_msg.txt", "w");    
-	unsigned char key[8] = "secret";
-	//unsigned char temp[8];
-
-	uint64_t temp = (uint64_t *)key;
-
-	//memcpy(temp, key, 8);
-
-	doPermutation(&temp, parityDrop, 56);
-
-	int i;
-	for (i = 64; i > 0; i--) {
-		printf("%d", getBit(temp, i - 1));
+    //FILE *decrypted_msg_fp = fopen("decrypted_msg.txt", "w");
+	// variables
+	int i, j, k;
+	unsigned char key[16] = "133457799BBCDFF1";
+	unsigned char subKeys[17][3][7];
+	unsigned char leftKey[4], rightKey[4];
+	unsigned char *temp;
+	// unhex the key
+	temp = unHexifyKey(key);
+	//printfB(temp);
+	// perform a parity drop
+	doPermutation(temp, parityDrop, 56);
+	//printfB(temp);
+	// set aside memory for the left and right keys
+	memset(leftKey, 0, 4);
+	memset(rightKey, 0, 4);
+	// set the bits for each 28 bit piece
+	for (i = 0; i < 28; i++) {
+		setBit(leftKey, i, getBit(temp, i));
+		setBit(rightKey, i, getBit(temp, i + 28));
 	}
-	printf("\n");
+	//printfB(leftKey);
+	//printfB(rightKey);
+	// copy subkeys into temporary storage
+	memcpy(subKeys[0][0], leftKey, 7);
+	memcpy(subKeys[0][1], rightKey, 7);
+	// iterate to perform rotations
+	for (k = 1; k < 17; k++) {
+		// rotate the keys
+		pushBit(subKeys[k - 1][0], 28, keyShifts[k]);
+		pushBit(subKeys[k - 1][1], 28, keyShifts[k]);
+	}
+	// concatenate and permutate the keys
+	for (k = 1; k < 17; k++) {
+		//  concatenate the keys
+		for (j = 0; j < 28; j++) {
+			setBit(subKeys[k][2], j, getBit(subKeys[k][0], j));
+			setBit(subKeys[k][2], j + 28, getBit(subKeys[k][1], j));
+		}
+		// permutate the key into a 48 bit key
+		doPermutation(subKeys[k][2], keyPermutations, 48);
 
-	//uint8_t *pbox = expandPBox((unsigned int *)in);
-	
-	//printf("%u, %u\n", (&pbox)[0], (&pbox)[1]);
-    // read key from key file
-    // read msg from msg file (msg size will exactly be size of 1 cipher block)
-    // convert key as string to uint32_t
-    // encrypt msg with des using �des_enc� and write encrypted message using �hexdump_to_string� to �encrypted_msg.bin�
-    // decrypt encrypted msg with des using �des_dec� and write decrypted message to �decrypted_msg.txt�
+		printfB(subKeys[k][2]);
+	}
+    // exit
     return 0;
 } 
