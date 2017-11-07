@@ -13,9 +13,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
-
-#include "bithacks.h"
-
 // parity drop table
 static const int parityDrop[56] = {
    57, 49, 41, 33, 25, 17,  9,  1, 58, 50, 42, 34, 26, 18,
@@ -150,15 +147,15 @@ void pushBit(unsigned char *data, int size, int count) {
 	for (i = 0; i < count; i++) {
 		for (j = 0; j <= ((size - 1) / 8); j++) {
 			// last bit
-			lsBit = getBit(&data[i], 0);
+			lsBit = getBit(&data[j], 0);
 			// set msb if at zero
-			if (i == 0) {
+			if (j == 0) {
 				msBit = lsBit;
 			} else {
-				setBit(&data[i - 1], 7, lsBit);
+				setBit(&data[j - 1], 7, lsBit);
 			}
 			// shift left by 1
-			data[i] = data[i] << 1;
+			data[j] = data[j] << 1;
 		}
 		// set lsb
 		setBit(data, size - 1, msBit);
@@ -177,30 +174,7 @@ void doPermutation(unsigned char *data, const int *pArray, int count) {
 	// set return
 	memcpy(data, temp, 8);
 }
-/*// expand & permute
-uint8_t * expandPBox (unsigned int v[1]) {
-	// memory storage for returning the expanded p box
-	unsigned int pbox[2];
-
-	pbox[0] = v[0] & 15;
-	pbox[0] = pbox[0] << 1;
-	if (B_IS_SET(pbox[0], 1))
-		B_TOGGLE(pbox[0], 0);
-	if (B_IS_SET(pbox[0], 4))
-		B_TOGGLE(pbox[0], 5);
-printf("%d\n", pbox[0]);
-
-	pbox[1] = v[0] & 240;
-	pbox[1] = pbox[1] >> 3;
-	if (B_IS_SET(pbox[1], 1))
-		B_TOGGLE(pbox[1], 0);
-	if (B_IS_SET(pbox[1], 4))
-		B_TOGGLE(pbox[1], 5);
-printf("%d\n", pbox[1]);
-	return (uint8_t *)pbox;
-}*/
-
-
+// hexdump
 void hexdump_to_string(const void *data, int size, char *str) {
 	const unsigned char *byte = (unsigned char *)data;
 	while (size > 0) {
@@ -211,14 +185,82 @@ void hexdump_to_string(const void *data, int size, char *str) {
 	}
 }
 // des encryption
-void des_enc(uint32_t v[2], uint32_t const key[2]) {
-	
+void des_enc(unsigned char *message, unsigned char subKeys[16][7]) {
+	// call main with encryption switch
+	des_main(message, subKeys, 0);
 }
 // des decryption
-void des_dec(uint32_t v[2], uint32_t const key[2]) {
-	
+void des_dec(unsigned char *message, unsigned char subKeys[16][7]) {
+	// call main with decryption switch
+	des_main(message, subKeys, 1);
 }
-
+// main decryption routine
+void des_main(unsigned char *message, unsigned char subKeys[16][7], int direction) {
+	// variables
+	int 			i, j, k,
+					row, col, pos;
+	unsigned char 	encryptedText[8],
+					leftText[6],
+					rightText[6],
+					funcText[6],
+					xorText[6],
+					subChar;
+	// perform the initial permutation on the message
+	doPermutation(message, initialPermutation, 64);
+	// split source into two blocks
+	memcpy(leftText, &message[0], 4);
+	memcpy(rightText, &message[4], 4);
+	// iterate over the subKeys we created earlier
+	for (i = 0; i < 16; i++) {
+		// copy right portion into our function text
+		memcpy(funcText, rightText, 4);
+		// calculate the permutation for the text
+		doPermutation(funcText, expansionPermutation, 48);
+		// determine the direction
+		if (direction == 0) {
+			// apply encryption
+			xorBit(funcText, subKeys[i], xorText, 48);
+		} else {
+			// apply decryption
+			xorBit(funcText, subKeys[15 - i], xorText, 48);
+		}
+		// copy back 6 bytes/48 bits
+		memcpy(funcText, xorText, 6);
+		// reset pos
+		pos = 0;
+		// perform the 8 sbox substitutions
+		for (j = 0; j < 8; j++) {
+			  // get rows and colums
+		      row = (getBit(funcText, (j * 6) + 0) * 2) + (getBit(funcText, (j * 6) + 5) * 1);
+		      col = (getBit(funcText, (j * 6) + 1) * 8) + (getBit(funcText, (j * 6) + 2) * 4) +
+		            (getBit(funcText, (j * 6) + 3) * 2) + (getBit(funcText, (j * 6) + 4) * 1);
+		      // get the substitution for the 6-bit output
+		      subChar = (unsigned char)sbox[j][row][col];
+		      // iterate and substitute the bits in funcText with substitutes
+		      for (k = 4; k < 8; k++) {
+		    	 // set bits for position p using k bits in subChar
+		         setBit(funcText, pos, getBit(&subChar, k));
+		         // increment pos
+		         pos++;
+		      }
+		}
+		// permute the function text with the straight pbox
+		doPermutation(funcText, pbox, 32);
+		// xor the leftText and funcText
+		xorBit(leftText, funcText, xorText, 32);
+		// copy right to left for next round
+		memcpy(leftText, rightText, 4);
+		// set the right for the next round
+		memcpy(rightText, xorText, 4);
+	}
+	// reassemble text pairs
+	memcpy(&encryptedText[4], leftText, 4);
+	memcpy(&encryptedText[0], rightText, 4);
+	// permute the final result
+	doPermutation(encryptedText, finalPermutation, 64);
+	// copy back
+	memcpy(message, encryptedText, 8);
+}
 // round key generation (scrubbed because of indirection issues)
 void generateKeys(unsigned char *key, unsigned char ****subKeys) {
 
@@ -254,117 +296,85 @@ void printfB(unsigned char *text) {
 	      		printf("%d", !!((text[i] << j) & 0x80));
 	printf("\n");
 }
-
+// main entry
 int main(int argc, char **argv) {
-    //FILE *msg_fp = fopen("message.txt", "r");
-    //FILE *key_fp = fopen("key.txt", "r");
-    //FILE *encrypted_msg_fp = fopen("encrypted_msg.bin", "wb");
-    //FILE *decrypted_msg_fp = fopen("decrypted_msg.txt", "w");
+	// variables
+	int fileSize;
+	unsigned char originalKey[16];
+	unsigned char *plainText;
+	unsigned char *unHexdKey;
+	unsigned char *hexDumped;
+	// files
+    FILE *msg_fp = fopen("message.txt", "r");
+    FILE *key_fp = fopen("key.txt", "r");
+    FILE *encrypted_msg_fp = fopen("encrypted_msg.bin", "wb");
+    FILE *decrypted_msg_fp = fopen("decrypted_msg.txt", "w");
+    // read key from key file
+    fread(originalKey, 16, 1, key_fp);
+    // set data length
+    fseek(msg_fp, 0, SEEK_END);
+    fileSize = ftell(msg_fp);
+    rewind(msg_fp);
+    // allocate space for message
+    plainText = (char *)malloc((fileSize + 1) * sizeof(char));
+    // get the message
+    fread(plainText, sizeof(char), fileSize, msg_fp);
+
+    //--------------------------------------------> REPLACE
 	// variables
 	int i, j, k;
 	unsigned char key[16] = "133457799BBCDFF1";
-	unsigned char subKeys[17][3][7];
+	unsigned char subKeys[16][7];
 	unsigned char leftKey[4], rightKey[4];
-	unsigned char *temp;
 	// unhex the key
-	temp = unHexifyKey(key);
-	//printfB(temp);
+	unHexdKey = unHexifyKey(originalKey);
 	// perform a parity drop
-	doPermutation(temp, parityDrop, 56);
-	//printfB(temp);
+	doPermutation(unHexdKey, parityDrop, 56);
 	// set aside memory for the left and right keys
 	memset(leftKey, 0, 4);
 	memset(rightKey, 0, 4);
 	// set the bits for each 28 bit piece
 	for (i = 0; i < 28; i++) {
-		setBit(leftKey, i, getBit(temp, i));
-		setBit(rightKey, i, getBit(temp, i + 28));
-	}
-	//printfB(leftKey);
-	//printfB(rightKey);
-	// copy subkeys into temporary storage
-	memcpy(subKeys[0][0], leftKey, 7);
-	memcpy(subKeys[0][1], rightKey, 7);
-	// iterate to perform rotations
-	for (k = 1; k < 17; k++) {
-		// rotate the keys
-		pushBit(subKeys[k - 1][0], 28, keyShifts[k]);
-		pushBit(subKeys[k - 1][1], 28, keyShifts[k]);
+		setBit(leftKey, i, getBit(unHexdKey, i));
+		setBit(rightKey, i, getBit(unHexdKey, i + 28));
 	}
 	// concatenate and permutate the keys
-	for (k = 1; k < 17; k++) {
+	for (k = 0; k < 16; k++) {
+		// rotate the keys
+		pushBit(leftKey, 28, keyShifts[k]);
+		pushBit(rightKey, 28, keyShifts[k]);
 		//  concatenate the keys
 		for (j = 0; j < 28; j++) {
-			setBit(subKeys[k][2], j, getBit(subKeys[k][0], j));
-			setBit(subKeys[k][2], j + 28, getBit(subKeys[k][1], j));
+			setBit(subKeys[k], j, getBit(leftKey, j));
+			setBit(subKeys[k], j + 28, getBit(rightKey, j));
 		}
 		// calculate the permutation for the key and expand into a 48 bit key
-		doPermutation(subKeys[k][2], keyPermutations, 48);
-
-		//printfB(subKeys[k][2]);
+		doPermutation(subKeys[k], keyPermutations, 48);
 	}
-
-
-	unsigned char plainText[8] = {0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF};
-	unsigned char encryptedText[8];
-
-
-
-
-    int row, col, pos = 0;
-	unsigned char leftText[6], rightText[6], funcText[6], xorText[6], subChar;
-
-	doPermutation(plainText, initialPermutation, 64);
-	// split source into two blocks
-	memcpy(leftText, &plainText[0], 4);
-	memcpy(rightText, &plainText[4], 4);
-	// iterate over the subKeys we created earlier
-	for (i = 1; i < 17; i++) {
-		// copy right portion into our function text
-		memcpy(funcText, rightText, 4);
-		// calculate the permutation for the text
-		doPermutation(funcText, expansionPermutation, 48);
-		// apply encryption
-		xorBit(funcText, subKeys[i][3], xorText, 48);
-		// copy back 6 bytes/48 bits
-		memcpy(xorText, funcText, 6);
-		// reset pos
-		pos = 0;
-		// perform the 8 sbox substitutions
-		for (j = 0; j < 8; j++) {
-			  // get rows and colums
-		      row = (getBit(funcText, (j * 6) + 0) * 2) + (getBit(funcText, (j * 6) + 5) * 1);
-		      col = (getBit(funcText, (j * 6) + 1) * 8) + (getBit(funcText, (j * 6) + 2) * 4) +
-		            (getBit(funcText, (j * 6) + 3) * 2) + (getBit(funcText, (j * 6) + 4) * 1);
-		      // get the substitution for the 6-bit output
-		      subChar = (unsigned char)sbox[j][row][col];
-		      // iterate and substitute the bits in funcText with substitutes
-		      for (k = 4; k < 8; k++) {
-		    	 // set bits for position p using k bits in subChar
-		         setBit(funcText, pos, getBit(&subChar, k));
-		         // increment pos
-		         pos++;
-		      }
-		}
-		// permute the function text with the straight pbox
-		doPermutation(funcText, pbox, 32);
-		// xor the leftText and funcText
-		xorBit(leftText, funcText, xorText, 32);
-		// copy right to left for next round
-		memcpy(leftText, rightText, 4);
-		// set the right for the next round
-		memcpy(rightText, xorText, 4);
-	}
-	// reassemble text pairs
-	memcpy(&encryptedText[0], leftText, 4);
-	memcpy(&encryptedText[1], rightText, 4);
-	// permute the final result
-	doPermutation(encryptedText, finalPermutation, 64);
+	//--------------------------------------------> REPLACE
+	// encrypt the message
+	des_enc(plainText, subKeys);
     // string out space
-    char *out = (char *)malloc(64 * sizeof(char));
+    hexDumped = (char *)malloc((fileSize * 2) * sizeof(char));
     // convert to string data
-    hexdump_to_string(encryptedText, 64, out);
-	printf("%s", out);
+    hexdump_to_string(plainText, fileSize, hexDumped);
+    // write to file
+    fwrite((char *)hexDumped, sizeof(char), (fileSize * 2), encrypted_msg_fp);
+    // decrypt the message
+    des_dec(plainText, subKeys);
+    // write message to file
+    fwrite((char *)plainText, sizeof(char), fileSize, decrypted_msg_fp);
+    // free
+    free(plainText);
+    free(hexDumped);
+    // dangling pointers
+    plainText = NULL;
+    hexDumped = NULL;
+    // close resources
+    fclose(msg_fp);
+    fclose(key_fp);
+    fclose(encrypted_msg_fp);
+    fclose(decrypted_msg_fp);
     // exit
     return 0;
 } 
